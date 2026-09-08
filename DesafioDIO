@@ -1,0 +1,85 @@
+df["Class"].value_counts(normalize=True)
+0    0.998273
+1    0.001727
+import numpy as np
+df["Amount_log"] = np.log1p(df["Amount"])
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+df["Amount_scaled"] = scaler.fit_transform(df[["Amount"]])
+Amount_scaled
+from sklearn.model_selection import train_test_split
+X = df.drop("Class", axis=1)
+y = df["Class"]
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    stratify=y,
+    test_size=0.3,
+    random_state=42
+)
+from sklearn.linear_model import LogisticRegression
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+from sklearn.metrics import classification_report
+print(classification_report(y_test, y_pred))
+from sklearn.metrics import roc_curve, roc_auc_score
+import matplotlib.pyplot as plt
+y_probs = model.predict_proba(X_test)[:, 1]
+fpr, tpr, _ = roc_curve(y_test, y_probs)
+plt.plot(fpr, tpr)
+plt.title("ROC Curve")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.show()
+print("AUC:", roc_auc_score(y_test, y_probs))
+from sklearn.metrics import precision_recall_curve
+precision, recall, _ = precision_recall_curve(y_test, y_probs)
+plt.plot(recall, precision)
+plt.title("Precision-Recall Curve")
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.show()
+from sklearn.metrics import precision_recall_curve
+precision, recall, _ = precision_recall_curve(y_test, y_probs)
+plt.plot(recall, precision)
+plt.title("Precision-Recall Curve")
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.show()
+class_weight="balanced"
+# Undersampling
+fraudes = df[df["Class"] == 1]
+normais = df[df["Class"] == 0].sample(
+    len(fraudes),
+    random_state=42
+)
+df_under = pd.concat([fraudes, normais])
+492 fraudes
+492 transações normais
+from imblearn.over_sampling import SMOTE
+smote = SMOTE()
+X_res, y_res = smote.fit_resample(X, y)
+from sklearn.pipeline import Pipeline
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("model", LogisticRegression(max_iter=1000))
+])
+pipeline.fit(X_train, y_train)
+y_pred = pipeline.predict(X_test)
+threshold = 0.3
+y_pred_custom = (y_probs > threshold).astype(int)
+print(classification_report(y_test, y_pred_custom))
+probabilidade > 0.5 → fraude
+probabilidade <= 0.5 → normal
+probabilidade > 0.3 → fraude
+from xgboost import XGBClassifier
+xgb = XGBClassifier(
+    scale_pos_weight=10,
+    use_label_encoder=False,
+    eval_metric="logloss"
+)
+xgb.fit(X_train, y_train)
+y_pred_xgb = xgb.predict(X_test)
+print(classification_report(y_test, y_pred_xgb))
+scale_pos_weight=10
