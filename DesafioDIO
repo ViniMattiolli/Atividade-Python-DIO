@@ -1,85 +1,610 @@
-df["Class"].value_counts(normalize=True)
-0    0.998273
-1    0.001727
-import numpy as np
-df["Amount_log"] = np.log1p(df["Amount"])
-from sklearn.preprocessing import StandardScaler
-scaler = StandardScaler()
-df["Amount_scaled"] = scaler.fit_transform(df[["Amount"]])
-Amount_scaled
-from sklearn.model_selection import train_test_split
-X = df.drop("Class", axis=1)
-y = df["Class"]
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    stratify=y,
-    test_size=0.3,
-    random_state=42
-)
-from sklearn.linear_model import LogisticRegression
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
-from sklearn.metrics import classification_report
-print(classification_report(y_test, y_pred))
-from sklearn.metrics import roc_curve, roc_auc_score
-import matplotlib.pyplot as plt
-y_probs = model.predict_proba(X_test)[:, 1]
-fpr, tpr, _ = roc_curve(y_test, y_probs)
-plt.plot(fpr, tpr)
-plt.title("ROC Curve")
-plt.xlabel("False Positive Rate")
-plt.ylabel("True Positive Rate")
-plt.show()
-print("AUC:", roc_auc_score(y_test, y_probs))
-from sklearn.metrics import precision_recall_curve
-precision, recall, _ = precision_recall_curve(y_test, y_probs)
-plt.plot(recall, precision)
-plt.title("Precision-Recall Curve")
-plt.xlabel("Recall")
-plt.ylabel("Precision")
-plt.show()
-from sklearn.metrics import precision_recall_curve
-precision, recall, _ = precision_recall_curve(y_test, y_probs)
-plt.plot(recall, precision)
-plt.title("Precision-Recall Curve")
-plt.xlabel("Recall")
-plt.ylabel("Precision")
-plt.show()
-class_weight="balanced"
-# Undersampling
-fraudes = df[df["Class"] == 1]
-normais = df[df["Class"] == 0].sample(
-    len(fraudes),
-    random_state=42
-)
-df_under = pd.concat([fraudes, normais])
-492 fraudes
-492 transações normais
-from imblearn.over_sampling import SMOTE
-smote = SMOTE()
-X_res, y_res = smote.fit_resample(X, y)
-from sklearn.pipeline import Pipeline
-pipeline = Pipeline([
-    ("scaler", StandardScaler()),
-    ("model", LogisticRegression(max_iter=1000))
-])
-pipeline.fit(X_train, y_train)
-y_pred = pipeline.predict(X_test)
-threshold = 0.3
-y_pred_custom = (y_probs > threshold).astype(int)
-print(classification_report(y_test, y_pred_custom))
-probabilidade > 0.5 → fraude
-probabilidade <= 0.5 → normal
-probabilidade > 0.3 → fraude
-from xgboost import XGBClassifier
-xgb = XGBClassifier(
-    scale_pos_weight=10,
-    use_label_encoder=False,
-    eval_metric="logloss"
-)
-xgb.fit(X_train, y_train)
-y_pred_xgb = xgb.predict(X_test)
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "6dec788f",
+   "metadata": {},
+   "source": [
+    "# Detecção de Anomalias em Transações\n",
+    "\n",
+    "Projeto de detecção de transações fraudulentas com Python e Machine Learning.\n",
+    "\n",
+    "A estrutura acompanha as etapas apresentadas na atividade da DIO. Na etapa de SMOTE, o balanceamento é aplicado somente ao conjunto de treinamento para evitar data leakage."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "344a61f1",
+   "metadata": {},
+   "source": [
+    "## 1. Instalação das bibliotecas"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "68ea9e01",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!pip -q install imbalanced-learn xgboost shap"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bf17ac51",
+   "metadata": {},
+   "source": [
+    "## 2. Importação das bibliotecas"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "668898d2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "from sklearn.model_selection import train_test_split, GridSearchCV\n",
+    "from sklearn.preprocessing import StandardScaler\n",
+    "from sklearn.linear_model import LogisticRegression\n",
+    "from sklearn.ensemble import RandomForestClassifier\n",
+    "from sklearn.pipeline import Pipeline\n",
+    "from sklearn.metrics import (\n",
+    "    classification_report, confusion_matrix,\n",
+    "    roc_curve, roc_auc_score, precision_recall_curve\n",
+    ")\n",
+    "\n",
+    "from imblearn.over_sampling import SMOTE\n",
+    "from xgboost import XGBClassifier\n",
+    "import shap\n",
+    "\n",
+    "pd.set_option(\"display.max_columns\", None)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "64f639a6",
+   "metadata": {},
+   "source": [
+    "## 3. Carregamento dos dados"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "75323955",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = pd.read_csv(\"creditcard.csv\")\n",
+    "print(\"Dimensões do dataset:\", df.shape)\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a1bc0d88",
+   "metadata": {},
+   "source": [
+    "## 4. Análise exploratória"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4696fde0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(\"Informações do dataset:\")\n",
+    "df.info()\n",
+    "\n",
+    "print(\"\\nTotal de valores nulos:\")\n",
+    "print(df.isnull().sum().sum())\n",
+    "\n",
+    "print(\"\\nDistribuição da variável Class:\")\n",
+    "print(df[\"Class\"].value_counts())\n",
+    "\n",
+    "print(\"\\nDistribuição proporcional:\")\n",
+    "print(df[\"Class\"].value_counts(normalize=True))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c18c2d8c",
+   "metadata": {},
+   "source": [
+    "### Interpretação\n",
+    "\n",
+    "`Class = 0` representa uma transação normal e `Class = 1` representa fraude.\n",
+    "\n",
+    "O dataset é fortemente desbalanceado. Portanto, accuracy isoladamente não é suficiente para avaliar o problema."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8b88af29",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df[\"Class\"].value_counts(normalize=True).plot(\n",
+    "    kind=\"bar\", title=\"Proporção das classes\"\n",
+    ")\n",
+    "plt.xlabel(\"Class\")\n",
+    "plt.ylabel(\"Proporção\")\n",
+    "plt.xticks(rotation=0)\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1f9f3ff5",
+   "metadata": {},
+   "source": [
+    "## 5. Transformação logarítmica do Amount"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a5fb6bf3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df[\"Amount_log\"] = np.log1p(df[\"Amount\"])\n",
+    "df[[\"Amount\", \"Amount_log\"]].head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e593632b",
+   "metadata": {},
+   "source": [
+    "## 6. Padronização do Amount"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "42e7f6f0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "scaler = StandardScaler()\n",
+    "df[\"Amount_scaled\"] = scaler.fit_transform(df[[\"Amount\"]])\n",
+    "df[[\"Amount\", \"Amount_log\", \"Amount_scaled\"]].head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b12471f9",
+   "metadata": {},
+   "source": [
+    "## 7. Separação entre X e y"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9a849b4f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "X = df.drop(\"Class\", axis=1)\n",
+    "y = df[\"Class\"]\n",
+    "\n",
+    "print(\"X:\", X.shape)\n",
+    "print(\"y:\", y.shape)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4689e991",
+   "metadata": {},
+   "source": [
+    "## 8. Train/Test Split"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8867c0ec",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "X_train, X_test, y_train, y_test = train_test_split(\n",
+    "    X, y, stratify=y, test_size=0.3, random_state=42\n",
+    ")\n",
+    "\n",
+    "print(\"Treino:\", X_train.shape)\n",
+    "print(\"Teste:\", X_test.shape)\n",
+    "print(\"Fraudes no treino:\", y_train.sum())\n",
+    "print(\"Fraudes no teste:\", y_test.sum())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5378bd43",
+   "metadata": {},
+   "source": [
+    "## 9. Regressão Logística"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f479eec4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "model = LogisticRegression(max_iter=1000)\n",
+    "model.fit(X_train, y_train)\n",
+    "y_pred = model.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8c9b1234",
+   "metadata": {},
+   "source": [
+    "## 10. Curva ROC"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "151d595e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "y_probs = model.predict_proba(X_test)[:, 1]\n",
+    "\n",
+    "fpr, tpr, _ = roc_curve(y_test, y_probs)\n",
+    "\n",
+    "plt.plot(fpr, tpr)\n",
+    "plt.title(\"ROC Curve\")\n",
+    "plt.xlabel(\"False Positive Rate\")\n",
+    "plt.ylabel(\"True Positive Rate\")\n",
+    "plt.show()\n",
+    "\n",
+    "print(\"AUC:\", round(roc_auc_score(y_test, y_probs), 4))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4623740e",
+   "metadata": {},
+   "source": [
+    "## 11. Curva Precision-Recall"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d6226484",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "precision, recall, _ = precision_recall_curve(y_test, y_probs)\n",
+    "\n",
+    "plt.plot(recall, precision)\n",
+    "plt.title(\"Precision-Recall Curve\")\n",
+    "plt.xlabel(\"Recall\")\n",
+    "plt.ylabel(\"Precision\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e2b676d3",
+   "metadata": {},
+   "source": [
+    "## 12. Random Forest"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4608970b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rf = RandomForestClassifier(\n",
+    "    n_estimators=50,\n",
+    "    max_depth=10,\n",
+    "    class_weight=\"balanced\",\n",
+    "    n_jobs=-1,\n",
+    "    random_state=42\n",
+    ")\n",
+    "\n",
+    "rf.fit(X_train, y_train)\n",
+    "y_pred_rf = rf.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_rf))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ef7c6ef7",
+   "metadata": {},
+   "source": [
+    "## 13. Balanceamento — Undersampling"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fd552f0a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fraudes = df[df[\"Class\"] == 1]\n",
+    "normais = df[df[\"Class\"] == 0].sample(len(fraudes), random_state=42)\n",
+    "df_under = pd.concat([fraudes, normais])\n",
+    "\n",
+    "print(df_under[\"Class\"].value_counts())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1d2e7076",
+   "metadata": {},
+   "source": [
+    "## 14. Balanceamento — SMOTE\n",
+    "\n",
+    "O SMOTE é aplicado somente ao conjunto de treinamento, depois da divisão treino/teste, para evitar data leakage."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "617a82cc",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "smote = SMOTE(random_state=42)\n",
+    "X_train_res, y_train_res = smote.fit_resample(X_train, y_train)\n",
+    "\n",
+    "print(\"Antes do SMOTE:\")\n",
+    "print(y_train.value_counts())\n",
+    "\n",
+    "print(\"\\nDepois do SMOTE:\")\n",
+    "print(y_train_res.value_counts())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "be6722cc",
+   "metadata": {},
+   "source": [
+    "## 15. Regressão Logística com SMOTE"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0fa327e4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "model_smote = LogisticRegression(max_iter=1000)\n",
+    "model_smote.fit(X_train_res, y_train_res)\n",
+    "y_pred_smote = model_smote.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_smote))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b56927e6",
+   "metadata": {},
+   "source": [
+    "## 16. Pipeline"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "46dc29a0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "pipeline = Pipeline([\n",
+    "    (\"scaler\", StandardScaler()),\n",
+    "    (\"model\", LogisticRegression(max_iter=1000))\n",
+    "])\n",
+    "\n",
+    "pipeline.fit(X_train, y_train)\n",
+    "y_pred_pipeline = pipeline.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_pipeline))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9bc3d90f",
+   "metadata": {},
+   "source": [
+    "## 17. Ajuste de threshold"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fe75a975",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "threshold = 0.3\n",
+    "y_pred_custom = (y_probs > threshold).astype(int)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_custom))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "94a1a38a",
+   "metadata": {},
+   "source": [
+    "## 18. XGBoost"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a7025a0c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "xgb = XGBClassifier(\n",
+    "    scale_pos_weight=10,\n",
+    "    eval_metric=\"logloss\",\n",
+    "    random_state=42\n",
+    ")\n",
+    "\n",
+    "xgb.fit(X_train, y_train)\n",
+    "y_pred_xgb = xgb.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_xgb))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "19328e3e",
+   "metadata": {},
+   "source": [
+    "## 19. Importância das variáveis"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2472d59e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "importancias = xgb.feature_importances_\n",
+    "\n",
+    "plt.bar(range(len(importancias)), importancias)\n",
+    "plt.title(\"Importância das variáveis\")\n",
+    "plt.xlabel(\"Índice da variável\")\n",
+    "plt.ylabel(\"Importância\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cb7fe7be",
+   "metadata": {},
+   "source": [
+    "## 20. GridSearchCV"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "513a7213",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "param_grid = {\n",
+    "    \"max_depth\": [3, 5],\n",
+    "    \"n_estimators\": [50, 100]\n",
+    "}\n",
+    "\n",
+    "grid = GridSearchCV(\n",
+    "    XGBClassifier(eval_metric=\"logloss\", random_state=42),\n",
+    "    param_grid,\n",
+    "    scoring=\"recall\",\n",
+    "    cv=3,\n",
+    "    n_jobs=-1\n",
+    ")\n",
+    "\n",
+    "grid.fit(X_train, y_train)\n",
+    "\n",
+    "print(\"Melhor modelo:\", grid.best_params_)\n",
+    "print(\"Melhor recall médio:\", round(grid.best_score_, 4))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9e5660ac",
+   "metadata": {},
+   "source": [
+    "## 21. Avaliação do melhor XGBoost"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "76629571",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "best_xgb = grid.best_estimator_\n",
+    "y_pred_best_xgb = best_xgb.predict(X_test)\n",
+    "\n",
+    "print(classification_report(y_test, y_pred_best_xgb))\n",
+    "print(\"Matriz de confusão:\")\n",
+    "print(confusion_matrix(y_test, y_pred_best_xgb))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f71f3def",
+   "metadata": {},
+   "source": [
+    "## 22. Explicabilidade com SHAP"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3534e496",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "explainer = shap.Explainer(xgb)\n",
+    "shap_values = explainer(X_test.iloc[:100])\n",
+    "shap.plots.bar(shap_values)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5f64be7e",
+   "metadata": {},
+   "source": [
+    "## 23. Conclusão\n",
+    "\n",
+    "O dataset apresenta forte desbalanceamento entre transações normais e fraudulentas. Por isso, recall, precision, F1-score, ROC-AUC e Precision-Recall são mais informativos do que accuracy isoladamente.\n",
+    "\n",
+    "Foram comparadas Regressão Logística, Random Forest e XGBoost, além de técnicas de balanceamento, ajuste de threshold, otimização de hiperparâmetros e explicabilidade com SHAP.\n",
+    "\n",
+    "Em um cenário real, a escolha do modelo e do threshold deve considerar o custo de falsos positivos e falsos negativos."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+
 print(classification_report(y_test, y_pred_xgb))
 scale_pos_weight=10
