@@ -6,12 +6,7 @@
    "metadata": {},
    "source": [
     "# Detecção de Anomalias em Transações\n",
-    "\n",
-    "Projeto de detecção de transações fraudulentas com Python e Machine Learning.\n",
-    "\n",
-    "A estrutura acompanha as etapas apresentadas na atividade da DIO. Na etapa de SMOTE, o balanceamento é aplicado somente ao conjunto de treinamento para evitar data leakage."
-   ]
-  },
+    "\n"
   {
    "cell_type": "markdown",
    "id": "344a61f1",
